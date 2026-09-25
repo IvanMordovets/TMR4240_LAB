@@ -44,23 +44,65 @@ Constructor contract — the automated checks (``python check.py``, ``pytest``,
 constructor defaults. Tuning only inside ``run_case_part1.py`` will pass your
 own runs but fail the checks.
 """
+from __future__ import annotations
+
+from typing import Dict, Optional
 import numpy as np
+
+from part_1.config import PIDGains
+from simulation.utils import wrap_angle_pi
 
 
 class DPController:
     """
-    Template for student DP controller.
+    3-DOF Dynamic Positioning PID Controller.
 
-    Students may implement any type of controller (PID, LQR, backstepping,
-    ...). Only compute() is required; everything else is optional.
+    Calculates the desired 3-DOF generalized BODY wrench [Fx, Fy, Mz] based on:
+      - Position error: e_pos_body = Rz(psi)^T * (eta_ref[:2] - eta[:2])
+      - Heading error:  e_psi = wrap_angle_pi(eta_ref[5] - eta[5])
+      - Velocity error: e_nu = nu_ref_body - nu (with damping)
+      - Integrated tracking errors with clamping anti-windup.
     """
 
-    def __init__(self, *args, **kwargs):
-        pass
+    def __init__(self, gains: Optional[PIDGains] = None, *args, **kwargs) -> None:
+        """
+        Initialize the controller with gains from config or custom instance.
+        """
+        self.gains = gains if gains is not None else PIDGains()
 
-    def reset(self) -> None:
-        """Optional: reset internal states (integrators, filters) before a run."""
-        pass
+        self.Kp = np.asarray(self.gains.Kp, dtype=float)
+        self.Kd = np.asarray(self.gains.Kd, dtype=float)
+        self.Ki = np.asarray(self.gains.Ki, dtype=float)
+        self.int_limit = np.asarray(self.gains.int_limit, dtype=float)
+
+        # Integrator states in BODY frame: [int_ex_b, int_ey_b, int_epsi]
+        self.int_err = np.zeros(3, dtype=float)
+
+        # Diagnostic logging hooks for simulation engine / plotters
+        self.last_pid_body: Dict[str, np.ndarray] = {
+            "P": np.zeros(6, dtype=float),
+            "I": np.zeros(6, dtype=float),
+            "D": np.zeros(6, dtype=float),
+        }
+
+    @property
+    def int_ned(self) -> np.ndarray:
+        """Return the horizontal integrated error for logger compatibility."""
+        return self.int_err[:2]
+
+    @property
+    def int_psi(self) -> float:
+        """Return the heading integrated error for logger compatibility."""
+        return float(self.int_err[2])
+
+    def reset(self, *args, **kwargs) -> None:
+        """Reset internal integrator states and logging buffers."""
+        self.int_err = np.zeros(3, dtype=float)
+        self.last_pid_body = {
+            "P": np.zeros(6, dtype=float),
+            "I": np.zeros(6, dtype=float),
+            "D": np.zeros(6, dtype=float),
+        }
 
     def compute(
         self,
@@ -69,10 +111,73 @@ class DPController:
         eta: np.ndarray,
         nu: np.ndarray,
         eta_ref: np.ndarray,
-        nu_ref: np.ndarray | None = None,
-        acc_ref: np.ndarray | None = None,
+        nu_ref: Optional[np.ndarray] = None,
+        acc_ref: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        # TODO: Replace this placeholder with your DP controller.
-        # Return the (6,) desired BODY wrench — fill in tau_d[0] = Fx,
-        # tau_d[1] = Fy, tau_d[5] = Mz and leave the rest zero.
-        return np.zeros(6)
+        """
+        Compute the desired generalized BODY wrench tau_d.
+        """
+        psi = float(eta[5])
+
+        # 1. Position error in NED, rotated to BODY frame using Rz(psi)^T
+        pos_err_ned = np.asarray(eta_ref[:2], dtype=float) - np.asarray(eta[:2], dtype=float)
+        c, s = np.cos(psi), np.sin(psi)
+        pos_err_body = np.array([
+            c * pos_err_ned[0] + s * pos_err_ned[1],
+            -s * pos_err_ned[0] + c * pos_err_ned[1],
+        ], dtype=float)
+
+        # 2. Shortest-path heading error wrapping to (-pi, pi]
+        e_psi = wrap_angle_pi(float(eta_ref[5]) - psi)
+
+        # 3-DOF error vector: [e_x_b, e_y_b, e_psi]
+        e = np.array([pos_err_body[0], pos_err_body[1], e_psi], dtype=float)
+
+        # 3. Integrator update with anti-windup clamping
+        self.int_err += e * dt
+        self.int_err = np.clip(self.int_err, -self.int_limit, self.int_limit)
+
+        # 4. Velocity error (damping + reference feedforward if present)
+        if nu_ref is not None and not np.all(np.isnan(nu_ref)):
+            nu_ref_ned_xy = np.asarray(nu_ref[:2], dtype=float)
+            u_d = c * nu_ref_ned_xy[0] + s * nu_ref_ned_xy[1]
+            v_d = -s * nu_ref_ned_xy[0] + c * nu_ref_ned_xy[1]
+            r_d = float(nu_ref[5])
+            nu_d = np.array([u_d, v_d, r_d], dtype=float)
+            e_dot = nu_d - np.asarray(nu[[0, 1, 5]], dtype=float)
+        else:
+            e_dot = -np.asarray(nu[[0, 1, 5]], dtype=float)
+
+        # 5. PID component calculations
+        tau_P_3 = self.Kp * e
+        tau_I_3 = self.Ki * self.int_err
+        tau_D_3 = self.Kd * e_dot
+
+        tau_3 = tau_P_3 + tau_I_3 + tau_D_3
+
+        # 6. Populate 6-DOF BODY wrench
+        tau_d = np.zeros(6, dtype=float)
+        tau_d[0] = tau_3[0]  # Surge force Fx [N]
+        tau_d[1] = tau_3[1]  # Sway force Fy [N]
+        tau_d[5] = tau_3[2]  # Yaw moment Mz [Nm]
+
+        # Log breakdown for plotters
+        self.last_pid_body["P"] = np.array([tau_P_3[0], tau_P_3[1], 0.0, 0.0, 0.0, tau_P_3[2]], dtype=float)
+        self.last_pid_body["I"] = np.array([tau_I_3[0], tau_I_3[1], 0.0, 0.0, 0.0, tau_I_3[2]], dtype=float)
+        self.last_pid_body["D"] = np.array([tau_D_3[0], tau_D_3[1], 0.0, 0.0, 0.0, tau_D_3[2]], dtype=float)
+
+        return tau_d
+
+    def apply_external_aw(
+        self, tau_applied: np.ndarray, psi: float, dt: float
+    ) -> None:
+        """
+        Anti-windup back-calculation scheme when actuators saturate.
+        """
+        tau_applied = np.asarray(tau_applied, dtype=float)
+        tau_req = self.last_pid_body["P"] + self.last_pid_body["I"] + self.last_pid_body["D"]
+        delta_tau = tau_applied[[0, 1, 5]] - tau_req[[0, 1, 5]]
+
+        Kaw = 0.05
+        self.int_err += Kaw * delta_tau / (self.Kp + 1e-6) * dt
+        self.int_err = np.clip(self.int_err, -self.int_limit, self.int_limit)
