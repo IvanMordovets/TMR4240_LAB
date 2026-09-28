@@ -70,11 +70,11 @@ class ThrustAllocator:
         alpha_now: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         n = len(self.thrusters)
-        tau_c = tau_d[[0, 1, 5]]          # (3,) — the 3-DOF wrench: [Fx, Fy, Mz]
+        tau_c = tau_d[[0, 1, 5]] # (3,) — the 3-DOF wrench: [Fx, Fy, Mz]
 
-        M = self.B_e @ self.B_e.T         # (3,3) — always square, invertible if rank(B_e)=3
-        y = np.linalg.solve(M, tau_c)     # solve rather than invert (numerically preferred)
-        z = self.B_e.T @ y                # (5,) — [u_T, Fx1, Fy1, Fx2, Fy2]
+        M = self.B_e @ self.B_e.T         
+        y = np.linalg.solve(M, tau_c)     
+        z = self.B_e.T @ y # (5,) — [u_T, Fx1, Fy1, Fx2, Fy2]
 
         # Unpack z back into per-thruster (u_i, alpha_i) using self.layout.
         u_cmd = np.zeros(n)
