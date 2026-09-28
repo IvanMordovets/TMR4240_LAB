@@ -16,7 +16,7 @@
 Project Part 1: Design of a Dynamic Positioning System}
 \author{\IEEEauthorblockN{Group 7}
 \IEEEauthorblockA{Department of Marine Technology, NTNU\\
-\todo{add all group member names}}}
+Ivan Mordovets and Bastien Moreaux}}
 
 \begin{document}
 \maketitle
@@ -152,12 +152,18 @@ must always be wrapped to $(-\pi, \pi]$ using
 \section{Current Model}
 \label{sec:current}
 
+\emph{Note: the group member originally responsible for the current
+model left the group, and the current model was therefore written
+entirely by an AI assistant (Google, Gemini).}
+
 The ocean current is defined in the NED frame by a speed
 $V_c$ and a direction, using only the North and East components (the
-vertical component is always zero). \todo{State explicitly whether
-your implementation's direction input means the current is coming
-``from'' that direction or flowing ``towards'' it, and give the
-resulting NED vector convention.}
+vertical component is always zero). The direction input $\beta_c$
+(0 = North, $\pi/2$ = East) is used with the ``from'' convention: the
+water flows towards $\beta_c+\pi$, so
+$V_{c,N}=V_c\cos(\beta_c+\pi)$ and $V_{c,E}=V_c\sin(\beta_c+\pi)$.
+For example, ``current from east'' gives $V_{c,E}=-V_c$, i.e.\ water
+flowing westward.
 
 To act on the vessel, the current is transformed from the NED frame to
 the body frame and subtracted from the vessel velocity to obtain the
@@ -175,13 +181,20 @@ $\nu_r$ inside the hydrodynamic damping terms. This means the current
 model's only responsibility is to produce a correct NED velocity
 vector $[V_{c,N}(t), V_{c,E}(t)]$ at each time step.
 
-\todo{Describe your current implementation here: constant vs.\
-time-varying profile, the parameters used in Simulations 1 and 2
-(speed, direction/rotation profile, duration), and justify them with
-reference to the mandatory test definitions.}
+The current has constant speed and a direction that is either fixed
+or rotated linearly in time,
+$\beta_c(t)=\beta_0+\min(t/T_r,1)\,(\beta_1-\beta_0)$. Simulation~1a
+uses $V_c=0.5$ m/s from east ($\beta_c=\pi/2$, fixed). Simulation~2
+uses $V_c=0.5$ m/s with $\beta_c$ rotating from $0$ (north) to
+$\pi/2$ (east) over $T_r=300$ s, as specified by the mandatory tests;
+the speed stays constant while only the direction changes.
 
 \section{Wind Model}
 \label{sec:wind}
+
+\emph{Note: the group member originally responsible for the wind
+model left the group, and the wind model was therefore written
+entirely by an AI assistant (Google, Gemini).}
 
 The wind model returns a six-component generalised body-frame load
 vector, of which only the surge, sway, and yaw entries
@@ -210,11 +223,25 @@ U_{rw} = \sqrt{(V_{rw,x}^b)^2 + (V_{rw,y}^b)^2}, \qquad
 
 For Project Part 1, the wind speed has a constant mean component and
 a slowly varying stochastic component, while the wind direction is
-kept constant. \todo{State the mean wind speed/direction and the
-slowly varying component's parameters (e.g.\ standard deviation,
-time constant, random seed) used in Simulation 1b, and justify the
-chosen values. Reference the wind coefficient figure from the
-appendix (generated in \texttt{notebooks/wind\_coefficients.ipynb}).}
+kept constant. The ambient speed is $U_w=\max(0,\,\bar U+u_s)$, where
+the slow component $u_s$ is a first-order Gauss--Markov process,
+\begin{equation}
+u_{s,k+1} = e^{-h/T_s}\,u_{s,k} + w_k, \qquad
+w_k\sim\mathcal{N}\!\left(0,\;\sigma_s^2\left(1-e^{-2h/T_s}\right)\right),
+\end{equation}
+with time step $h$, which has stationary standard deviation
+$\sigma_s$. The direction uses the same ``from'' convention as the
+current, so wind from east has $V_{w,E}=-U_w$. The coefficient table
+is interpolated linearly in $\alpha_{rw}$ and is periodic over
+$360^\circ$.
+
+Simulation~1b uses $\bar U=15$ m/s from east, $\sigma_s=1$ m/s as
+specified, and $T_s=120$ s. The time constant is the template
+default, chosen to be slow compared with the vessel's response, so
+that the variation reads as a drifting mean rather than gusts. The
+random seed is fixed (\texttt{seed=0}) so results are reproducible.
+The resulting wind speed, relative angle, and body loads are shown in
+Fig.~\ref{fig:sim1b-wind}.
 
 \section{Thruster Dynamics}
 \label{sec:thrusters}
@@ -253,10 +280,21 @@ Azimuth\_2 & azimuth & -13.0 & -3.0 & $0^\circ$ (free) & 80 \\
 \end{tabular}
 \end{table}
 
-\todo{State whether you kept the thruster dynamics disabled (as
-required for the mandatory Part 1 tests) or additionally enabled the
-full actuator dynamics as an optional extension, and justify your
-choice.}
+The simulator's actuator block would additionally enforce thrust-rate
+limits (4 kN/s for the tunnel, 10 kN/s for the azimuths), an
+azimuth-rate limit of $12^\circ$/s, and saturation at $u_{\max}$.
+We kept this block \emph{disabled} (\texttt{thruster\_dynamics=False},
+the Part~1 default) for all four mandatory simulations, and did not
+enable the optional full dynamics. The reason is scope: Part~1
+validates the DP loop with ideal actuators, and the dynamic limits
+are introduced in Part~2. The consequence is that the allocator's
+commands are applied exactly as computed. In particular, thrust above
+$u_{\max}$ and instantaneous azimuth reversals, as seen in
+Simulation~3 (Section~\ref{sec:sim3}), are not physically limited in
+our results. With the dynamics enabled, the 12$^\circ$/s azimuth-rate
+limit would prevent such $180^\circ$ flips, so these results should
+not be read as evidence that the allocator would perform the same on
+real thrusters.
 
 \section{Thrust Allocation}
 \label{sec:allocation}
@@ -558,28 +596,34 @@ Azimuth\_1: $-97.5^\circ\!\to\!63.3^\circ$), with the two thrusters
 flipping together rather than independently. Cross-referencing against
 the commanded thrust magnitude at each jump shows $u_j\approx0$–$1\,
 \mathrm{N}$ at exactly those instants -- i.e.\ the jumps occur when
-the demanded force from that thruster passes through zero. This is
-the angle-ambiguity effect noted in
-Section~\ref{sec:alloc-limits}: Eq.~\eqref{eq:recover} always returns
-a non-negative magnitude, so a continuous rotation through zero force
-is represented as a discontinuous $\sim\!180^\circ$ jump to the
-opposite-signed solution rather than a smooth pass-through. The two
-azimuths flip together because of their mirrored position
-($y=\pm3\,\mathrm{m}$): a rotating demanded wrench crosses both
-thrusters' zero-force directions at close to the same time. The
-underlying demanded wrench itself also exceeds actuator capacity by
-$\sim\!2.5\times$ during this scenario (Section~\ref{sec:alloc-limits}),
-which is what repeatedly drives the allocation through these
-zero-crossings rather than passing through once.
+the demanded force from that thruster passes through zero. The
+demanded wrench during this phase is almost a pure yaw moment
+$M_z(t)$ that oscillates in sign with slowly decaying amplitude (a
+lightly damped closed-loop yaw oscillation), with negligible $F_x$,
+$F_y$. Producing $+M_z$ or $-M_z$ with the stern azimuths requires
+sideways force of opposite sign, i.e.\ thrust pointing at
+$\alpha\approx+90^\circ$ or $\alpha\approx-90^\circ$. Because
+Eq.~\eqref{eq:recover} always returns a non-negative magnitude, each
+sign change of $M_z$ is represented as a discontinuous $\sim\!180^\circ$
+azimuth flip rather than a smooth pass through zero thrust -- the
+angle-ambiguity effect noted in Section~\ref{sec:alloc-limits}, where
+$(u,\alpha)$ and $(-u,\alpha+\pi)$ produce the same force. The two
+azimuths flip together because the symmetric layout
+($y=\pm3\,\mathrm{m}$) makes the minimum-norm solution split the
+demand almost equally between them, so both cross zero at the same
+instant. The tunnel thruster is unaffected since its command is a
+signed thrust at a fixed angle. Separately, the initial transient of
+this scenario demands about $2.5\times$ the azimuth capacity
+(Section~\ref{sec:alloc-limits}).
 
-\todo{This oversized demand likely also reflects the controller not
-yet being tuned / lacking anti-windup (\S6.3) -- confirm with
-whoever owns the controller section, since it is the root cause of
-\emph{why} the allocator is exercised this hard, even though the
-angle-jump behaviour itself is a structural property of the allocator
-and would appear (less dramatically) even with a well-tuned
-controller. Insert the actual position/heading/alpha(t)/u(t) plots
-here (with vs.\ without reference model) once finalised.}
+\todo{The initial oversized demand likely reflects controller tuning /
+missing anti-windup (\S6.3) -- confirm with whoever owns the
+controller section. Whether the sustained yaw oscillation is related
+to that or is a separate lightly damped mode of the heading loop has
+not been verified. The angle-flip behaviour itself is a property of
+the allocator's representation of the force, not of the controller.
+Insert the with vs.\ without reference model thruster plots here once
+finalised.}
 
 \subsection{Simulation 4: Four-Corner Test}
 Setpoints $\eta_0,\ldots,\eta_5$ from Table~2 of the project text,
@@ -607,6 +651,12 @@ before each transition (Fig.~\ref{fig:sim4}), and check whether the
 same azimuth-flip pathology from Simulation 3
 (Fig.~\ref{fig:sim3-thrusters}) reappears here at larger, sustained
 setpoint changes (Fig.~\ref{fig:sim4-thrusters}).}
+
+\section*{Individual Contributions}
+The wind and current models were written entirely by an AI assistant
+(Google, Gemini), because the group member originally assigned to
+them left the group. \todo{Add the factual, specific contribution of
+each remaining group member.}
 
 \section*{Acknowledgment}
 \todo{Remove this section, or use it if relevant.}
