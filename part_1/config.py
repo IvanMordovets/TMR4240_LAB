@@ -44,19 +44,19 @@ class PIDGains:
     """
     # Proportional gains: [N/m, N/m, Nm/rad]
     Kp: np.ndarray = field(
-        default_factory=lambda: np.array([120.0e3, 100.0e3, 1800.0e3], dtype=float)
+        default_factory=lambda: np.array([45000, 35000, 900000], dtype=float)
     )
-    # Derivative gains: [N*s/m, N*s/m, Nm*s/rad]
+    # Derivative gains: [N*s/m, N*s/m, Nm*s/rad] (fortement augmentés pour freiner l'inertie)
     Kd: np.ndarray = field(
-        default_factory=lambda: np.array([250.0e3, 200.0e3, 3000.0e3], dtype=float)
+        default_factory=lambda: np.array([700000, 700000, 5500000], dtype=float)
     )
     # Integral gains: [N/(m*s), N/(m*s), Nm/(rad*s)]
     Ki: np.ndarray = field(
-        default_factory=lambda: np.array([2.5e3, 2.0e3, 35.0e3], dtype=float)
+        default_factory=lambda: np.array([700, 500, 15000], dtype=float)
     )
-    # Integrator anti-windup clamping limits: [m*s, m*s, rad*s]
+    # Clamping limits resserrées pour éviter l'effet de traîne : [m*s, m*s, rad*s]
     int_limit: np.ndarray = field(
-        default_factory=lambda: np.array([25.0, 25.0, np.deg2rad(15.0)], dtype=float)
+        default_factory=lambda: np.array([12.0, 12.0, np.deg2rad(8.0)], dtype=float)
     )
 
 
