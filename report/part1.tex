@@ -471,6 +471,87 @@ $(u_j,\alpha_j)$ formulation before the optimisation is solved.
 The most visible consequence of both gaps together is discussed in
 Simulation 3 and 4, Section~\ref{sec:sim3}.
 
+\section{Controller Design}
+\label{sec:controller}
+
+The dynamic positioning (DP) controller drives the vessel to the commanded setpoints and maintains position and heading against ambient environmental disturbances. The controller outputs a horizontal 3-DOF generalized control wrench in the body frame $\{b\}$:
+\begin{equation}
+\tau_d^b = [F_x,\, F_y,\, M_z]^\top,
+\end{equation}
+consisting of surge force $F_x$, sway force $F_y$, and yaw moment $M_z$.
+
+\subsection{Multivariable PID Architecture}
+The control law consists of a decoupled 3-DOF proportional-integral-derivative (PID) structure formulated in the vessel body frame $\{b\}$, augmented with reference velocity feedforward and integrator anti-windup clamping.
+
+\subsubsection{Tracking Error and Frame Rotation}
+The vessel pose $\eta = [N, E, \psi]^\top$ and reference trajectory $\eta_{\mathrm{ref}} = [N_d, E_d, \psi_d]^\top$ are defined in the NED frame $\{n\}$. Because actuators generate thrust along the ship's longitudinal and transverse axes, the horizontal position error must be transformed into the body-fixed frame $\{b\}$ using $R_z^\top(\psi)$:
+\begin{align}
+e_{\mathrm{pos}}^b &= \begin{bmatrix} e_x^b \\ e_y^b \end{bmatrix} = R_z^\top(\psi) \begin{bmatrix} N_d - N \\ E_d - E \end{bmatrix} \nonumber \\
+&= \begin{bmatrix} \cos\psi & \sin\psi \\ -\sin\psi & \cos\psi \end{bmatrix} \begin{bmatrix} N_d - N \\ E_d - E \end{bmatrix}.
+\end{align}
+
+To avoid erroneous $2\pi$ rotations when crossing the branch cut at $\pm \pi$, the heading tracking error is normalized to the interval $(-\pi, \pi]$ using the shortest angular path:
+\begin{equation}
+e_\psi = \operatorname{atan2}\left( \sin(\psi_d - \psi),\, \cos(\psi_d - \psi) \right).
+\end{equation}
+The composite tracking error vector is denoted by:
+\begin{equation}
+e = [e_x^b,\, e_y^b,\, e_\psi]^\top.
+\end{equation}
+
+\subsubsection{Integral Action and Clamping Anti-Windup}
+The integral state accumulates tracking errors to reject non-zero mean environmental disturbances (e.g., current drag and mean wind loads):
+\begin{equation}
+z(t_{k+1}) = z(t_k) + e(t_k)\,\Delta t, \quad z = [z_x,\, z_y,\, z_\psi]^\top.
+\end{equation}
+During large setpoint transitions, unbounded error integration causes severe integrator windup, inducing massive overshoot upon target arrival. To prevent this, each integrator channel is strictly clamped:
+\begin{equation}
+z_i \leftarrow \operatorname{clip}(z_i,\, -z_{\max,i},\, z_{\max,i}), \quad i \in \{x, y, \psi\}.
+\end{equation}
+
+\subsubsection{Derivative Action and Trajectory Tracking}
+When the reference model provides desired velocity trajectories $\nu_{\mathrm{ref}} = [\dot{N}_d, \dot{E}_d, \dot{\psi}_d]^\top$, the velocity error is evaluated relative to the measured body velocities $\nu = [u, v, r]^\top$:
+\begin{equation}
+\dot{e} = \nu_d^b - \nu, \quad \text{where} \quad 
+\nu_d^b = \begin{bmatrix} R_z^\top(\psi) \begin{bmatrix} \dot{N}_d \\ \dot{E}_d \end{bmatrix} \\ \dot{\psi}_d \end{bmatrix}.
+\end{equation}
+For pure station keeping ($\nu_d^b = 0$), this simplifies to $\dot{e} = -\nu$, providing active hydrodynamic viscous damping.
+
+\subsubsection{Generalized Control Law}
+The commanded 3-DOF body wrench is calculated as:
+\begin{equation}
+\tau_{3\mathrm{DOF}} = K_p \, e + K_i \, z + K_d \, \dot{e},
+\label{eq:pid_law}
+\end{equation}
+where $K_p, K_i, K_d \in \mathbb{R}^{3 \times 3}$ are diagonal positive-definite gain matrices:
+\begin{align}
+K_p &= \operatorname{diag}(K_{p,u},\, K_{p,v},\, K_{p,r}), \\
+K_d &= \operatorname{diag}(K_{d,u},\, K_{d,v},\, K_{d,r}), \\
+K_i &= \operatorname{diag}(K_{i,u},\, K_{i,v},\, K_{i,r}).
+\end{align}
+For simulator integration, the 3-DOF wrench $\tau_{3\mathrm{DOF}}$ is mapped into the general 6-DOF body vector $\tau_d \in \mathbb{R}^6$ at indices $[0, 1, 5]$.
+
+\subsection{Controller Gains and Anti-Windup Limits}
+The configured feedback gains and integrator saturation limits for R/V \emph{Gunnerus} are listed in Table~\ref{tab:pid_gains}.
+
+\begin{table}[htbp]
+\centering
+\caption{DP controller gains and anti-windup clamping limits.}
+\label{tab:pid_gains}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Axis} & \textbf{$K_p$} & \textbf{$K_d$} & \textbf{$K_i$} & \textbf{$z_{\max}$} \\
+\midrule
+Surge ($x$) [\text{kN, m, s}]  & $45.0$  & $700.0$  & $0.70$  & $12.0$ \\
+Sway ($y$) [\text{kN, m, s}]   & $35.0$  & $700.0$  & $0.50$  & $12.0$ \\
+Yaw ($\psi$) [\text{kNm, rad, s}] & $900.0$ & $5500.0$ & $15.00$ & $0.14$ ($8^\circ$) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
 \section{Simulation Results}
 \label{sec:results}
 
@@ -519,9 +600,19 @@ wind only (right). Both stay well within $u_{\max}$.}
 \label{fig:sim1b-thrusters}
 \end{figure}
 
-\todo{Report max/steady-state position error, settling time, and
-actuator effort for each case using
-Figs.~\ref{fig:sim1-xy}--\ref{fig:sim1a-thrusters} above.}
+\textbf{(a) Current.} Max position error $0.20\,\mathrm{m}$, settling
+to within $0.05\,\mathrm{m}$ after $63\,\mathrm{s}$, steady-state
+error $<\!0.01\,\mathrm{m}$. Max thrust $11.5/5.5/5.5\,\mathrm{kN}$
+(tunnel/az1/az2), well under $u_{\max}$.
+
+\textbf{(b) Wind.} Max position error $0.30\,\mathrm{m}$,
+steady-state error $0.02\pm0.01\,\mathrm{m}$ -- non-zero and noisy
+because the slowly-varying wind component keeps perturbing the
+vessel, not because of steady-state controller error. Max heading
+deviation $1.8^\circ$. Max thrust $19.2/7.8/7.7\,\mathrm{kN}$.
+
+Both cases hold position well inside the $1$--$5\,\mathrm{m}$ guideline
+range with no actuator saturation and no allocator pathology.
 
 \subsection{Simulation 2: Rotating Current}
 Current direction rotates linearly from north to east over 300 s at a
@@ -537,6 +628,14 @@ body-frame components during the 300 s rotation.}
 
 \begin{figure}[htbp]
 \centering
+\includegraphics[width=\linewidth]{figures/sim2_time_histories.png}
+\caption{Simulation 2: position, heading, and velocities vs.\
+setpoint during the current rotation.}
+\label{fig:sim2-time}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
 \includegraphics[width=0.48\linewidth]{figures/sim2_xy.png}
 \includegraphics[width=0.48\linewidth]{figures/sim2_thrusters.png}
 \caption{Simulation 2: $xy$-trajectory (left) and thruster commands
@@ -544,11 +643,14 @@ body-frame components during the 300 s rotation.}
 \label{fig:sim2-xy-thr}
 \end{figure}
 
-\todo{Discuss how the controller reacts during the 300 s rotation vs.\
-behaviour once the current direction stabilises (see
-Fig.~\ref{fig:sim2-current} for the current input and
-Fig.~\ref{fig:sim2-xy-thr} for the resulting position hold /
-actuator effort).}
+During the 300 s rotation, max position error is $0.04\,\mathrm{m}$;
+after the direction stabilises, max error is $0.014\,\mathrm{m}$, mean
+$0.001\,\mathrm{m}$. Max thrust is $8.8/4.2/4.2\,\mathrm{kN}$, far
+under $u_{\max}$. The largest azimuth step between consecutive
+$0.05\,\mathrm{s}$ samples is $0.1^\circ$ -- no flips. Unlike
+Simulations 3--4, the demanded wrench here changes slowly enough that
+it never approaches zero on either azimuth, so the angle-ambiguity
+behaviour of Section~\ref{sec:alloc-limits} does not appear.
 
 \subsection{Simulation 3: Setpoint Change With and Without Reference Model}
 \label{sec:sim3}
@@ -646,11 +748,23 @@ corners (right).}
 \label{fig:sim4-thrusters}
 \end{figure}
 
-\todo{Verify and discuss whether the vessel reaches steady position
-before each transition (Fig.~\ref{fig:sim4}), and check whether the
-same azimuth-flip pathology from Simulation 3
-(Fig.~\ref{fig:sim3-thrusters}) reappears here at larger, sustained
-setpoint changes (Fig.~\ref{fig:sim4-thrusters}).}
+The vessel reaches steady position before every transition: in the
+last 30 s of each 300 s hold, position error is $<\!0.001\,\mathrm{m}$
+and heading error $<\!0.001^\circ$ at all five corners.
+
+The actuator commands underneath this are bad. Peak commanded thrust
+is $874\,\mathrm{kN}$ on the tunnel and $844\,\mathrm{kN}$ on each
+azimuth -- $27\times$ and $10.5\times$ their limits, the worst
+saturation of all four simulations. The azimuth-flip pathology from
+Section~\ref{sec:sim3} recurs at every corner transition: Azimuth\_1
+and Azimuth\_2 each show more than ten individual jumps larger than
+$90^\circ$ over the run (several exactly $180^\circ$), visible as the
+repeated spikes in Fig.~\ref{fig:sim4-thrusters}. The cause is the
+same mechanism as Simulation 3 -- larger position/heading steps here
+produce larger, longer-lived oscillations in the demanded wrench, so
+the allocator's zero-crossing representation problem
+(Section~\ref{sec:alloc-limits}) is triggered more often and more
+severely, not by a new failure mode.
 
 \section*{Individual Contributions}
 The wind and current models were written entirely by an AI assistant
