@@ -31,8 +31,8 @@ class SimConfig:
 @dataclass
 class RefAxisConfig:
     """Reference-model configuration for one axis (see part_1/reference.py)."""
-    wn: float = 0.4                     # natural frequency [rad/s] (tuned for Gunnerus: soft start & settling < 600 s)
-    zeta: float = 1.0                   # damping ratio [-] (critical damping = 0% overshoot)
+    wn: float = 0.022                    # natural frequency [rad/s] (tuned for Gunnerus: soft start & settling < 600 s)
+    zeta: float = 1                   # damping ratio [-] (critical damping = 0% overshoot)
     rate_limit: Optional[float] = None  # max |x_dot| (m/s or rad/s); None = off
 
 
