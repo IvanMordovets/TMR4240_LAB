@@ -103,7 +103,7 @@ class ReferenceModel:
         axes = [
             (0, self.cfg_xy, False),   # North [m]
             (1, self.cfg_xy, False),   # East [m]
-            (5, self.cfg_psi, True),   # Yaw (psi) [rad]
+            (5, self.cfg_psi, True),   # Yaw [rad]
         ]
 
         for idx, cfg, is_angle in axes:
